@@ -110,9 +110,9 @@ def signup():
     otp = generate_otp()
     password_hash = generate_password_hash(password)
     
-    db = get_db()
-    users_coll = db.users
     try:
+        db = get_db()
+        users_coll = db.users
         # Check if user exists
         existing_user = users_coll.find_one({'email': email})
         if existing_user:
@@ -120,7 +120,8 @@ def signup():
         else:
             users_coll.insert_one({'email': email, 'password_hash': password_hash, 'otp': otp, 'verified': False})
     except Exception as e:
-        pass
+        traceback.print_exc()
+        return jsonify({"error": f"Database connection error: {str(e)}"}), 500
         
     email_sent = send_real_otp_email(email, otp)
     if email_sent:
@@ -134,15 +135,19 @@ def verify():
     email = data.get('email')
     otp = data.get('otp')
     
-    db = get_db()
-    users_coll = db.users
-    user = users_coll.find_one({'email': email, 'otp': otp})
-    
-    if user:
-        users_coll.update_one({'email': email}, {'$set': {'verified': True, 'otp': None}})
-        return jsonify({"message": "Verification successful!", "user_id": str(user['_id'])})
-    
-    return jsonify({"error": "Invalid OTP or Email"}), 401
+    try:
+        db = get_db()
+        users_coll = db.users
+        user = users_coll.find_one({'email': email, 'otp': otp})
+        
+        if user:
+            users_coll.update_one({'email': email}, {'$set': {'verified': True, 'otp': None}})
+            return jsonify({"message": "Verification successful!", "user_id": str(user['_id'])})
+        
+        return jsonify({"error": "Invalid OTP or Email"}), 401
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Database connection error: {str(e)}"}), 500
 
 @app.route('/auth/login', methods=['POST'])
 def login():
@@ -153,19 +158,23 @@ def login():
     if not email or not password:
         return jsonify({"error": "Email and password are required"}), 400
         
-    db = get_db()
-    users_coll = db.users
-    user = users_coll.find_one({'email': email})
-    
-    if user and user['verified']:
-        if user.get('password_hash') and check_password_hash(user['password_hash'], password):
-            return jsonify({"message": "Login successful.", "user_id": str(user['_id'])})
+    try:
+        db = get_db()
+        users_coll = db.users
+        user = users_coll.find_one({'email': email})
+        
+        if user and user['verified']:
+            if user.get('password_hash') and check_password_hash(user['password_hash'], password):
+                return jsonify({"message": "Login successful.", "user_id": str(user['_id'])})
+            else:
+                return jsonify({"error": "Invalid email or password"}), 401
+        elif user and not user['verified']:
+            return jsonify({"error": "Account not verified. Please complete signup."}), 403
         else:
-            return jsonify({"error": "Invalid email or password"}), 401
-    elif user and not user['verified']:
-        return jsonify({"error": "Account not verified. Please complete signup."}), 403
-    else:
-        return jsonify({"error": "User not found"}), 404
+            return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"Database connection error: {str(e)}"}), 500
 
 
 # ================================

@@ -17,6 +17,11 @@ load_dotenv()
 # Call _ensure_init() inside any function that needs these.
 
 API_KEYS = []
+keys_str = os.getenv("GEMINI_API_KEYS", "")
+if keys_str:
+    API_KEYS = [k.strip() for k in keys_str.split(",") if k.strip()]
+else:
+    API_KEYS = [os.getenv("GEMINI_API_KEY")] if os.getenv("GEMINI_API_KEY") else []
 
 # Fallback model chain tried in order when the current model is overloaded (503)
 FALLBACK_MODELS = [

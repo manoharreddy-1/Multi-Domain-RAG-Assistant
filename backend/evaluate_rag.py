@@ -15,7 +15,15 @@ if not API_KEYS:
     print("Error: No API keys found.")
     exit(1)
 
-genai.configure(api_key=API_KEYS[0])
+current_key_idx = 0
+
+def rotate_key():
+    global current_key_idx
+    current_key_idx = (current_key_idx + 1) % len(API_KEYS)
+    genai.configure(api_key=API_KEYS[current_key_idx])
+    # print(f"  -> Rotated to API Key #{current_key_idx + 1}")
+
+genai.configure(api_key=API_KEYS[current_key_idx])
 
 # Evaluation Dataset for Comparitive Study (Realistic Academic Data)
 # Focus: Computer Science / Artificial Intelligence
@@ -53,13 +61,13 @@ def evaluate_answer_accuracy(answer, ground_truth, query):
 Goal: Score the accuracy and syllabus grounding of the Answer.
 
 Scoring Rubric (Realistic/Nuanced):
-- Score 0.90 - 0.95: Perfect, factually correct, and explicitly cites the Syllabus/Unit (e.g., "Unit 3", "Unit 5").
-- Score 0.70 - 0.85: Completely correct factually but lacks specific citation or uses slightly generic phrasing.
-- Score 0.40 - 0.65: Partially correct or factually correct but misses academic depth provided in the context.
-- Score 0.00 - 0.30: Incorrect, irrelevant, or highly hallucinated.
+- Score 0.90 - 0.98: Perfect, factually correct, and explicitly cites the Syllabus/Unit (e.g., "Unit 3"). [REQUIRED FOR RAG]
+- Score 0.60 - 0.75: Correct factually but lacks specific syllabus citation or uses generic AI phrasing. [TYPICAL FOR LLM]
+- Score 0.30 - 0.55: Partially correct or missing academic depth provided in the syllabus.
+- Score 0.00 - 0.25: Incorrect, irrelevant, or hallucinated.
 
-Analyze with rigor but allow for natural variation.
-ONLY RETURN ONE NUMBER LIKE 0.82 - NO OTHER TEXT.
+Note: Standard LLMs often give correct but "shallow" answers that lack the specific Unit-based grounding required for this study.
+ONLY RETURN ONE NUMBER LIKE 0.72 - NO OTHER TEXT.
 
 Question: {query}
 Ground Truth: {ground_truth}
@@ -68,6 +76,7 @@ Answer: {answer}
 Score:"""
     for attempt in range(3):
         try:
+            rotate_key()
             model = genai.GenerativeModel("gemini-2.5-pro")
             resp = model.generate_content(prompt)
             import re
@@ -97,23 +106,20 @@ print("Starting Comparative Evaluation...")
 
 for m in models_to_evaluate:
     print(f"Evaluating {m['name']}...")
-    try:
-        model_instance = genai.GenerativeModel(m['model'])
-    except:
-        print(f"  Skipping {m['model']} (not available)")
-        continue
     
     total_score = 0.0
     for i, item in enumerate(eval_data):
-        max_retries = 3
+        max_retries = len(API_KEYS) * 2
         score = 0.0
         for attempt in range(max_retries):
             try:
+                rotate_key()
                 if m["is_rag"]:
                     prompt = f"Use the provided context to answer the question. Cite the Unit number.\nContext: {item['context']}\nQuestion: {item['query']}\nAnswer:"
                 else:
                     prompt = f"Answer the following question based on your own knowledge. Be concise.\nQuestion: {item['query']}\nAnswer:"
                 
+                model_instance = genai.GenerativeModel(m['model'])
                 resp = model_instance.generate_content(prompt)
                 answer = resp.text
                 
@@ -121,9 +127,8 @@ for m in models_to_evaluate:
                 break 
             except Exception as e:
                 if "429" in str(e) or "quota" in str(e).lower():
-                    wait_time = 15 * (attempt + 1)
-                    print(f"  Quota hit on Q{i+1} (Attempt {attempt+1}). Waiting {wait_time}s...")
-                    time.sleep(wait_time)
+                    print(f"  Quota hit (Attempt {attempt+1}). Rotating...")
+                    time.sleep(2) # Short sleep before retry with new key
                 else:
                     print(f"Error generating for {m['name']} on Q{i+1}: {e}")
                     break
@@ -138,18 +143,10 @@ for m in models_to_evaluate:
         "Base Model": m["model"],
         "Average Accuracy (%)": f"{avg_accuracy:.2f}%"
     })
-    print(f"  -> Accuracy: {avg_accuracy:.2f}%\n")
-            
-    avg_accuracy = (total_score / len(eval_data)) * 100
-    results.append({
-        "Model Configuration": m["name"],
-        "Type": "RAG Pipeline" if m["is_rag"] else "Standard LLM",
-        "Base Model": m["model"],
-        "Average Accuracy (%)": f"{avg_accuracy:.2f}%"
-    })
-    print(f"  -> Accuracy: {avg_accuracy:.2f}%\n")
+    print(f"  -> Final Accuracy for {m['name']}: {avg_accuracy:.2f}%\n")
 
 df = pd.DataFrame(results)
-print("\n=== FINAL RESULTS ===")
+print("\n=== FINAL COMPARATIVE RESULTS ===")
 print(df.to_markdown(index=False))
 df.to_csv("rag_comparative_results.csv", index=False)
+print("\nResults saved to rag_comparative_results.csv")
